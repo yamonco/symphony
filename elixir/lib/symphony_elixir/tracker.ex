@@ -15,6 +15,7 @@ defmodule SymphonyElixir.Tracker do
     "github" => SymphonyElixir.GitHub.Adapter,
     "gitlab" => SymphonyElixir.GitLab.Adapter,
     "jira" => SymphonyElixir.Jira.Adapter,
+    "langboard" => SymphonyElixir.Langboard.Adapter,
     "linear" => SymphonyElixir.Linear.Adapter,
     "memory" => SymphonyElixir.Tracker.Memory
   }
