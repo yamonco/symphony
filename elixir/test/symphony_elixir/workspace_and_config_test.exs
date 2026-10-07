@@ -5,6 +5,25 @@ defmodule SymphonyElixir.WorkspaceAndConfigTest do
   alias SymphonyElixir.Config.Schema.{Codex, StringOrMap}
   alias SymphonyElixir.Linear.Client
 
+  test "workspace preparation receives native issue identity without shell interpolation" do
+    root = Path.join(System.tmp_dir!(), "symphony-hook-scope-#{System.unique_integer([:positive])}")
+
+    try do
+      write_workflow_file!(Workflow.workflow_file_path(),
+        workspace_root: root,
+        hook_before_run: ~s(printf '%s\\n' "$SYMPHONY_ISSUE_ID" "$SYMPHONY_ISSUE_IDENTIFIER" "$SYMPHONY_EXECUTION_GENERATION" > scope.txt)
+      )
+
+      issue = %Issue{id: "card-1", identifier: "MT-1'$(touch injected)", native_ref: %{"execution_generation" => 7}}
+      assert {:ok, workspace} = Workspace.create_for_issue(issue)
+      assert :ok = Workspace.run_before_run_hook(workspace, issue)
+      assert File.read!(Path.join(workspace, "scope.txt")) == "card-1\nMT-1'$(touch injected)\n7\n"
+      refute File.exists?(Path.join(workspace, "injected"))
+    after
+      File.rm_rf(root)
+    end
+  end
+
   test "workspace bootstrap can be implemented in after_create hook" do
     test_root =
       Path.join(

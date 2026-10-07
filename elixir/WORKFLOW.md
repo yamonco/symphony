@@ -20,6 +20,9 @@ polling:
 workspace:
   root: ~/code/symphony-workspaces
 hooks:
+  # Hooks receive SYMPHONY_ISSUE_ID, SYMPHONY_ISSUE_IDENTIFIER,
+  # SYMPHONY_PROJECT_SLUG, SYMPHONY_BOARD_UID and SYMPHONY_EXECUTION_GENERATION.
+  # These identify the requested work; they do not grant execution authority.
   after_create: |
     git clone --depth 1 https://github.com/openai/symphony .
     if command -v mise >/dev/null 2>&1; then

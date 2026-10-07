@@ -175,6 +175,11 @@ Notes:
   identifier, title, and body.
 - Use `hooks.after_create` to bootstrap a fresh workspace. For a Git-backed repo, you can run
   `git clone ... .` there, along with any other setup commands you need.
+- Lifecycle hooks receive `SYMPHONY_ISSUE_ID`, `SYMPHONY_ISSUE_IDENTIFIER`,
+  `SYMPHONY_PROJECT_SLUG`, `SYMPHONY_BOARD_UID` and `SYMPHONY_EXECUTION_GENERATION`.
+  Native generation and board values are empty when unavailable. Preparation services must
+  validate these identifiers against authoritative project/card state before admitting work.
+  Values are passed as environment data, with shell quoting on remote workers.
 - If a hook needs `mise exec` inside a freshly cloned workspace, trust the repo config and fetch
   the project dependencies in `hooks.after_create` before invoking `mise` later from other hooks.
 - For the Linear adapter, `tracker.provider.api_key` reads from `LINEAR_API_KEY` when unset or
