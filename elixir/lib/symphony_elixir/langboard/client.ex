@@ -86,11 +86,11 @@ defmodule SymphonyElixir.Langboard.Client do
              request_fun,
              false
            ),
-         true <- is_list(payload) or {:error, :langboard_unknown_payload} do
-      cards = payload |> Enum.map(&normalize_card/1) |> Enum.reject(&is_nil/1)
+         {:ok, raw_cards, paged?} <- collection_cards(payload) do
+      cards = raw_cards |> Enum.map(&normalize_card/1) |> Enum.reject(&is_nil/1)
       updated_acc = [cards | acc]
 
-      if length(payload) < @page_size do
+      if not paged? or length(raw_cards) < @page_size do
         issues =
           updated_acc
           |> Enum.reverse()
@@ -99,10 +99,16 @@ defmodule SymphonyElixir.Langboard.Client do
 
         {:ok, issues}
       else
-        do_fetch_cards(settings, requested_states, request_fun, updated_acc, fetched + length(payload))
+        do_fetch_cards(settings, requested_states, request_fun, updated_acc, fetched + length(raw_cards))
       end
     end
   end
+
+  # The native board endpoint returns one complete collection in a cards envelope.
+  # Retain list pagination for compatible tracker endpoints.
+  defp collection_cards(%{"cards" => cards}) when is_list(cards), do: {:ok, cards, false}
+  defp collection_cards(cards) when is_list(cards), do: {:ok, cards, true}
+  defp collection_cards(_payload), do: {:error, :langboard_unknown_payload}
 
   defp fetch_issues_by_ids(issue_ids, tracker_settings, request_fun) do
     ids = Enum.uniq(issue_ids)
@@ -190,7 +196,7 @@ defmodule SymphonyElixir.Langboard.Client do
         identifier: "LB-#{uid}",
         title: title,
         description: card_description(core["description"]),
-        state: core["column_name"] || card["project_column_name"],
+        state: get_in(card, ["workflow", "project_column_name"]) || core["column_name"] || card["project_column_name"],
         labels: extract_labels(core),
         blocked_by: [],
         dispatchable: ready,
@@ -282,8 +288,13 @@ defmodule SymphonyElixir.Langboard.Client do
   end
 
   defp langboard_headers(token) do
+    auth =
+      if String.starts_with?(token, "sk-"),
+        do: {"x-api-key", token},
+        else: {"authorization", "Bearer " <> token}
+
     [
-      {"authorization", "Bearer " <> token},
+      auth,
       {"user-agent", @user_agent},
       {"accept", "application/json"}
     ]

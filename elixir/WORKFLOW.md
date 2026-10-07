@@ -330,3 +330,5 @@ Use this exact structure for the persistent workpad comment and keep it updated 
 
 <!-- Langboard tracker contract -->
 Langboard card polling advances each page by the number of raw cards received, including malformed cards omitted from normalized issues.
+
+The native Langboard board endpoint returns a complete `cards` envelope. Machine keys (`sk-`) use `X-Api-Key`; bearer tokens use `Authorization`. Context state comes from `card.workflow.project_column_name`, while readiness remains fenced by `card.execution`.

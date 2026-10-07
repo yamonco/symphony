@@ -16,6 +16,30 @@ defmodule SymphonyElixir.Langboard.AdapterTest do
     end
   end
 
+  defmodule NativeEndpoint do
+    @behaviour Plug
+    @impl true
+    def init(options), do: options
+
+    @impl true
+    def call(conn, options) do
+      api_keys = Plug.Conn.get_req_header(conn, "x-api-key")
+      bearer = Plug.Conn.get_req_header(conn, "authorization")
+      send(options[:owner], {:native_request, conn.request_path, api_keys, bearer})
+
+      body =
+        if String.ends_with?(conn.request_path, "/cards"),
+          do: %{"cards" => [%{"uid" => "CARD-1", "title" => "Work", "project_column_name" => "Doing"}]},
+          else: %{
+            "scope_context" => %{
+              "card" => %{"core" => %{"uid" => "CARD-1", "title" => "Work"}, "workflow" => %{"project_column_name" => "Doing"}, "execution" => %{"is_ready" => true, "generation" => 1}}
+            }
+          }
+
+      conn |> Plug.Conn.put_resp_content_type("application/json") |> Plug.Conn.send_resp(200, Jason.encode!(body))
+    end
+  end
+
   setup do
     langboard_client_module = Application.get_env(:symphony_elixir, :langboard_client_module)
 
@@ -100,6 +124,21 @@ defmodule SymphonyElixir.Langboard.AdapterTest do
     assert_receive {:cards_polled, %{"limit" => 100, "offset" => 0}}
   end
 
+  test "native board envelope is consumed once even above the page size" do
+    request_fun = fn "GET", "/board/BOARD/cards", params, _settings ->
+      assert params["offset"] == 0
+      send(self(), :native_board_read)
+      {:ok, %{status: 200, body: %{"cards" => Enum.map(1..172, &raw_card("CARD-#{&1}", "Work", "Doing"))}}}
+    end
+
+    assert {:ok, issues} =
+             LangboardClient.fetch_issues_by_states_for_test(["Doing"], tracker_settings(), request_fun)
+
+    assert length(issues) == 172
+    assert_receive :native_board_read
+    refute_receive :native_board_read
+  end
+
   test "client advances pagination by raw card count without repeating pages" do
     request_fun = fn "GET", "/board/BOARD/cards", params, _settings ->
       send(self(), {:page_offset, params["offset"]})
@@ -137,10 +176,10 @@ defmodule SymphonyElixir.Langboard.AdapterTest do
                  "uid" => "CARD-1",
                  "title" => "Fix login",
                  "description" => %{"content" => "Steps to reproduce"},
-                 "column_name" => "Doing",
                  "created_at" => "2026-10-01T00:00:00Z",
                  "updated_at" => "2026-10-01T01:00:00Z"
                },
+               "workflow" => %{"project_column_name" => "Doing", "workflow_stage" => "ready"},
                "execution" => %{"is_ready" => true, "generation" => 3}
              }
            }
@@ -152,6 +191,7 @@ defmodule SymphonyElixir.Langboard.AdapterTest do
              LangboardClient.fetch_issues_by_ids_for_test(["CARD-1"], tracker_settings(), request_fun)
 
     assert issue.id == "CARD-1"
+    assert issue.state == "Doing"
     assert issue.dispatchable
     assert issue.native_ref["execution_generation"] == 3
     assert issue.description == "Steps to reproduce"
@@ -186,6 +226,57 @@ defmodule SymphonyElixir.Langboard.AdapterTest do
 
     assert {:ok, []} =
              LangboardClient.fetch_issues_by_ids_for_test(["GONE"], tracker_settings(), request_fun)
+  end
+
+  test "real HTTP reads use machine or bearer credentials and native context state" do
+    server = start_supervised!({Bandit, plug: {NativeEndpoint, owner: self()}, ip: {127, 0, 0, 1}, port: 0})
+    {:ok, {_address, port}} = ThousandIsland.listener_info(server)
+
+    for {token, api_keys, bearer} <- [{"sk-test-machine", ["sk-test-machine"], []}, {"test-bearer", [], ["Bearer test-bearer"]}] do
+      File.write!(Workflow.workflow_file_path(), """
+      ---
+      tracker:
+        kind: langboard
+        active_states: [Doing]
+        terminal_states: [Done]
+        provider:
+          base_url: http://127.0.0.1:#{port}
+          board_uid: BOARD
+          token: #{token}
+      ---
+      Test workflow
+      """)
+
+      WorkflowStore.force_reload()
+      assert {:ok, [issue]} = LangboardClient.fetch_issues_by_states(["Doing"])
+      assert issue.id == "CARD-1"
+      assert_receive {:native_request, "/board/BOARD/cards", ^api_keys, ^bearer}
+      assert {:ok, [refreshed]} = LangboardClient.fetch_issues_by_ids(["CARD-1"])
+      assert refreshed.state == "Doing"
+      assert refreshed.dispatchable
+      assert_receive {:native_request, "/board/BOARD/card/CARD-1/context", ^api_keys, ^bearer}
+    end
+  end
+
+  test "unknown payloads and transport failures do not become empty or ready work" do
+    responses = [{:ok, %{status: 200, body: %{}}}, {:ok, %{status: 403, body: %{}}}, {:error, :timeout}, :invalid]
+
+    for response <- responses do
+      request = fn _, _, _, _ -> response end
+      assert {:error, _} = LangboardClient.fetch_issues_by_states_for_test(["Doing"], tracker_settings(), request)
+    end
+
+    for body <- [[], "invalid"] do
+      request = fn _, _, _, _ -> {:ok, %{status: 200, body: body}} end
+
+      assert {:error, :langboard_unknown_payload} =
+               LangboardClient.fetch_issues_by_ids_for_test(["CARD-1"], tracker_settings(), request)
+    end
+
+    request = fn _, _, _, _ -> {:ok, %{status: 200, body: %{}}} end
+    assert {:ok, []} = LangboardClient.fetch_issues_by_ids_for_test(["CARD-1"], tracker_settings(), request)
+    assert {:ok, []} = LangboardClient.fetch_issues_by_states_for_test([], tracker_settings(), request)
+    assert {:ok, []} = LangboardClient.fetch_issues_by_ids_for_test([], tracker_settings(), request)
   end
 
   defp tracker_settings(provider_overrides \\ %{}) do
