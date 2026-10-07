@@ -197,7 +197,7 @@ defmodule SymphonyElixir.Langboard.Client do
         title: title,
         description: card_description(core["description"]),
         state: get_in(card, ["workflow", "project_column_name"]) || core["column_name"] || card["project_column_name"],
-        labels: extract_labels(core),
+        labels: context_labels(card),
         blocked_by: [],
         dispatchable: ready,
         created_at: parse_datetime(core["created_at"]),
@@ -221,6 +221,13 @@ defmodule SymphonyElixir.Langboard.Client do
 
     generation = if ready, do: execution["generation"], else: nil
     {ready, generation}
+  end
+
+  defp context_labels(card) do
+    case get_in(card, ["classification", "labels", "items"]) do
+      labels when is_list(labels) -> extract_labels(%{"labels" => labels})
+      _ -> extract_labels(card["core"] || %{})
+    end
   end
 
   defp card_description(%{"content" => content}) when is_binary(content), do: content
