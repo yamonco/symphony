@@ -31,6 +31,9 @@ agent:
   max_concurrent_agents: 10
   max_turns: 20
 codex:
+  # Optional persistent thread identity directory outside workspace.root.
+  # Persist Codex HOME too; mismatched execution/pins fail closed.
+  # resume_state_root: /var/lib/symphony/sessions
   command: codex --config shell_environment_policy.inherit=all --config 'model="gpt-5.5"' --config model_reasoning_effort=xhigh app-server
   approval_policy: never
   thread_sandbox: workspace-write

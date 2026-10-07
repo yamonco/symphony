@@ -4,7 +4,7 @@ defmodule SymphonyElixir.Codex.AppServer do
   """
 
   require Logger
-  alias SymphonyElixir.{Codex.DynamicTool, Config, PathSafety, SSH}
+  alias SymphonyElixir.{Codex.DynamicTool, Codex.SessionCheckpoint, Config, PathSafety, SSH}
 
   @initialize_id 1
   @thread_start_id 2
@@ -21,12 +21,13 @@ defmodule SymphonyElixir.Codex.AppServer do
           thread_id: String.t(),
           workspace: Path.t(),
           worker_host: String.t() | nil,
-          dynamic_tool_binding: map()
+          dynamic_tool_binding: map(),
+          checkpoint: map() | nil
         }
 
   @spec run(Path.t(), String.t(), map(), keyword()) :: {:ok, map()} | {:error, term()}
   def run(workspace, prompt, issue, opts \\ []) do
-    with {:ok, session} <- start_session(workspace, opts) do
+    with {:ok, session} <- start_session(workspace, Keyword.put(opts, :issue, issue)) do
       try do
         run_turn(session, prompt, issue, opts)
       after
@@ -41,12 +42,13 @@ defmodule SymphonyElixir.Codex.AppServer do
     dynamic_tool_binding = DynamicTool.bind()
 
     with {:ok, expanded_workspace} <- validate_workspace_cwd(workspace, worker_host),
+         {:ok, checkpoint, resume_thread_id} <- SessionCheckpoint.load(expanded_workspace, Keyword.get(opts, :issue), worker_host),
          {:ok, port} <- start_port(expanded_workspace, worker_host, dynamic_tool_binding) do
       metadata = port_metadata(port, worker_host)
 
       with {:ok, session_policies} <- session_policies(expanded_workspace, worker_host),
            {:ok, thread_id} <-
-             do_start_session(port, expanded_workspace, session_policies, dynamic_tool_binding) do
+             do_start_session(port, expanded_workspace, session_policies, dynamic_tool_binding, resume_thread_id) do
         {:ok,
          %{
            port: port,
@@ -58,7 +60,8 @@ defmodule SymphonyElixir.Codex.AppServer do
            thread_id: thread_id,
            workspace: expanded_workspace,
            worker_host: worker_host,
-           dynamic_tool_binding: dynamic_tool_binding
+           dynamic_tool_binding: dynamic_tool_binding,
+           checkpoint: checkpoint
          }}
       else
         {:error, reason} ->
@@ -78,7 +81,8 @@ defmodule SymphonyElixir.Codex.AppServer do
           turn_sandbox_policy: turn_sandbox_policy,
           thread_id: thread_id,
           workspace: workspace,
-          dynamic_tool_binding: dynamic_tool_binding
+          dynamic_tool_binding: dynamic_tool_binding,
+          checkpoint: checkpoint
         },
         prompt,
         issue,
@@ -91,7 +95,14 @@ defmodule SymphonyElixir.Codex.AppServer do
         DynamicTool.execute(tool, arguments, dynamic_tool_binding, issue: issue)
       end)
 
-    case start_turn(port, thread_id, prompt, issue, workspace, approval_policy, turn_sandbox_policy) do
+    turn_started =
+      with {:ok, turn_id} <-
+             start_turn(port, thread_id, prompt, issue, workspace, approval_policy, turn_sandbox_policy),
+           :ok <- SessionCheckpoint.save(checkpoint, thread_id) do
+        {:ok, turn_id}
+      end
+
+    case turn_started do
       {:ok, turn_id} ->
         session_id = "#{thread_id}-#{turn_id}"
         Logger.info("Codex session started for #{issue_context(issue)} session_id=#{session_id}")
@@ -304,9 +315,9 @@ defmodule SymphonyElixir.Codex.AppServer do
     Config.codex_runtime_settings(workspace, remote: true)
   end
 
-  defp do_start_session(port, workspace, session_policies, dynamic_tool_binding) do
+  defp do_start_session(port, workspace, session_policies, dynamic_tool_binding, resume_thread_id) do
     case send_initialize(port) do
-      :ok -> start_thread(port, workspace, session_policies, dynamic_tool_binding)
+      :ok -> start_thread(port, workspace, session_policies, dynamic_tool_binding, resume_thread_id)
       {:error, reason} -> {:error, reason}
     end
   end
@@ -315,17 +326,26 @@ defmodule SymphonyElixir.Codex.AppServer do
          port,
          workspace,
          %{approval_policy: approval_policy, thread_sandbox: thread_sandbox},
-         dynamic_tool_binding
+         dynamic_tool_binding,
+         resume_thread_id
        ) do
+    params = %{
+      "approvalPolicy" => approval_policy,
+      "sandbox" => thread_sandbox,
+      "cwd" => workspace
+    }
+
+    {method, params} =
+      if is_binary(resume_thread_id) do
+        {"thread/resume", Map.put(params, "threadId", resume_thread_id)}
+      else
+        {"thread/start", Map.put(params, "dynamicTools", dynamic_tool_binding.tool_specs)}
+      end
+
     send_message(port, %{
-      "method" => "thread/start",
+      "method" => method,
       "id" => @thread_start_id,
-      "params" => %{
-        "approvalPolicy" => approval_policy,
-        "sandbox" => thread_sandbox,
-        "cwd" => workspace,
-        "dynamicTools" => dynamic_tool_binding.tool_specs
-      }
+      "params" => params
     })
 
     case await_response(port, @thread_start_id) do
