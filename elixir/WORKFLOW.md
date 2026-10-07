@@ -327,3 +327,6 @@ Use this exact structure for the persistent workpad comment and keep it updated 
 
 - <only include when something was confusing during execution>
 ````
+
+<!-- Langboard tracker contract -->
+Langboard card polling advances each page by the number of raw cards received, including malformed cards omitted from normalized issues.

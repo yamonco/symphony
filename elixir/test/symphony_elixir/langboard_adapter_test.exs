@@ -100,6 +100,31 @@ defmodule SymphonyElixir.Langboard.AdapterTest do
     assert_receive {:cards_polled, %{"limit" => 100, "offset" => 0}}
   end
 
+  test "client advances pagination by raw card count without repeating pages" do
+    request_fun = fn "GET", "/board/BOARD/cards", params, _settings ->
+      send(self(), {:page_offset, params["offset"]})
+
+      body =
+        case params["offset"] do
+          0 -> [%{"uid" => "malformed"} | Enum.map(1..99, &raw_card("CARD-#{&1}", "Work", "Doing"))]
+          100 -> [raw_card("CARD-100", "Last work", "Doing")]
+          offset -> flunk("unexpected pagination offset: #{offset}")
+        end
+
+      {:ok, %{status: 200, body: body}}
+    end
+
+    assert {:ok, issues} =
+             LangboardClient.fetch_issues_by_states_for_test(["Doing"], tracker_settings(), request_fun)
+
+    assert length(issues) == 100
+    assert length(Enum.uniq_by(issues, & &1.id)) == 100
+    assert List.last(issues).id == "CARD-100"
+    assert_receive {:page_offset, 0}
+    assert_receive {:page_offset, 100}
+    refute_receive {:page_offset, _}
+  end
+
   test "client refreshes cards by id through the context bundle fence" do
     request_fun = fn "GET", "/board/BOARD/card/CARD-1/context", _params, _settings ->
       {:ok,

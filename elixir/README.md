@@ -403,3 +403,6 @@ you.
 ## License
 
 This project is licensed under the [Apache License 2.0](../LICENSE).
+
+<!-- Langboard tracker contract -->
+Langboard card polling advances each page by the number of raw cards received, including malformed cards omitted from normalized issues.

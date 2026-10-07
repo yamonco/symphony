@@ -75,7 +75,7 @@ defmodule SymphonyElixir.Langboard.Client do
   end
 
   defp do_fetch_cards(settings, requested_states, request_fun, acc, fetched) do
-    params = %{"limit" => @page_size, "offset" => length(acc)}
+    params = %{"limit" => @page_size, "offset" => fetched}
 
     with {:ok, payload} <-
            request_with_settings(
