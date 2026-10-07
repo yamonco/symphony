@@ -1,5 +1,9 @@
 # Symphony
 
+The Elixir implementation passes scoped tracker identifiers to workspace lifecycle hooks
+so project preparation can validate native card generations before starting Codex.
+See the [Elixir hook contract](elixir/README.md) for the environment fields.
+
 Symphony turns project work into isolated, autonomous implementation runs, allowing teams to manage
 work instead of supervising coding agents.
 

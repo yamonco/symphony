@@ -401,7 +401,7 @@ defmodule SymphonyElixir.Workspace do
 
     task =
       Task.async(fn ->
-        System.cmd("sh", ["-lc", command], cd: workspace, stderr_to_stdout: true)
+        System.cmd("sh", ["-lc", command], cd: workspace, stderr_to_stdout: true, env: hook_environment(issue_context))
       end)
 
     case Task.yield(task, timeout_ms) do
@@ -422,7 +422,9 @@ defmodule SymphonyElixir.Workspace do
 
     Logger.info("Running workspace hook hook=#{hook_name} #{issue_log_context(issue_context)} workspace=#{workspace} worker_host=#{worker_host}")
 
-    case run_remote_command(worker_host, "cd #{shell_escape(workspace)} && #{command}", timeout_ms) do
+    environment = Enum.map_join(hook_environment(issue_context), " ", fn {key, value} -> "#{key}=#{shell_escape(value)}" end)
+
+    case run_remote_command(worker_host, "cd #{shell_escape(workspace)} && export #{environment} && #{command}", timeout_ms) do
       {:ok, cmd_result} ->
         handle_hook_command_result(cmd_result, workspace, issue_context, hook_name)
 
@@ -568,10 +570,23 @@ defmodule SymphonyElixir.Workspace do
   defp worker_host_for_log(nil), do: "local"
   defp worker_host_for_log(worker_host), do: worker_host
 
-  defp issue_context(%{id: issue_id, identifier: identifier}) do
+  defp hook_environment(context) do
+    tracker = Config.settings!().tracker
+
+    [
+      {"SYMPHONY_ISSUE_ID", context.issue_id || ""},
+      {"SYMPHONY_ISSUE_IDENTIFIER", context.issue_identifier || ""},
+      {"SYMPHONY_PROJECT_SLUG", tracker.project_slug || ""},
+      {"SYMPHONY_BOARD_UID", tracker.provider["board_uid"] || ""},
+      {"SYMPHONY_EXECUTION_GENERATION", to_string(Map.get(context, :execution_generation) || "")}
+    ]
+  end
+
+  defp issue_context(%{id: issue_id, identifier: identifier} = issue) do
     %{
       issue_id: issue_id,
-      issue_identifier: identifier || "issue"
+      issue_identifier: identifier || "issue",
+      execution_generation: (Map.get(issue, :native_ref) || %{})["execution_generation"]
     }
   end
 
