@@ -2310,3 +2310,20 @@ Extension config:
 - Cleanup and observability:
   - Operators need to know which host owns a run, where its workspace lives, and whether cleanup
     happened on the right machine.
+
+## Fork extension: durable local Codex thread identity
+
+Set `codex.resume_state_root` to a persistent directory outside `workspace.root` to
+resume the same Codex thread after a local worker or orchestrator restart. Keep
+Codex `HOME` persistent too: its own conversation files are required for
+`thread/resume`. The checkpoint contains thread identity only, not conversation
+content, and does not replace a project's durable session ledger.
+
+Checkpoints bind workspace, tracker endpoint/project/board, issue ID, execution
+generation, and the profile/Armory pin file hashes. A mismatched or malformed record
+fails closed; it never silently starts a replacement conversation. Remote SSH
+workers are rejected while checkpointing is enabled. Leave this setting absent
+for the previous new-thread behavior. Preserve checkpoints across workspace
+cleanup and retire them through the project's session lifecycle. Resuming sends
+`thread/resume` with the existing thread ID and policies; dynamic tools remain
+those persisted by Codex when the thread was created.
