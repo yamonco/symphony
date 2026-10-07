@@ -408,6 +408,7 @@ This project is licensed under the [Apache License 2.0](../LICENSE).
 Langboard card polling advances each page by the number of raw cards received, including malformed cards omitted from normalized issues.
 
 The native Langboard board endpoint returns a complete `cards` envelope. Machine keys (`sk-`) use `X-Api-Key`; bearer tokens use `Authorization`. Context state comes from `card.workflow.project_column_name`, while readiness remains fenced by `card.execution`.
+Native context labels come from `card.classification.labels.items`; an empty native label collection overrides stale labels in `card.core`. Compatible contexts without that collection retain core-label support.
 
 ### Durable Codex thread resume
 

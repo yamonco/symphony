@@ -3,6 +3,7 @@ defmodule SymphonyElixir.Langboard.AdapterTest do
 
   alias SymphonyElixir.Langboard.Adapter, as: LangboardAdapter
   alias SymphonyElixir.Langboard.Client, as: LangboardClient
+  alias SymphonyElixir.Tracker.Issue
 
   defmodule FakeLangboardClient do
     def fetch_issues_by_states(states) do
@@ -217,6 +218,36 @@ defmodule SymphonyElixir.Langboard.AdapterTest do
              LangboardClient.fetch_issues_by_ids_for_test(["CARD-9"], tracker_settings(), request_fun)
 
     refute issue.dispatchable
+  end
+
+  test "native context labels preserve routing and removal overrides stale core labels" do
+    for {labels, routable} <- [
+          {[%{"name" => " Symphony-Official-Pilot "}, %{"name" => "symphony-official-pilot"}], true},
+          {[], false}
+        ] do
+      request_fun = fn "GET", "/board/BOARD/card/CARD-1/context", _params, _settings ->
+        {:ok,
+         %{
+           status: 200,
+           body: %{
+             "scope_context" => %{
+               "card" => %{
+                 "core" => %{"uid" => "CARD-1", "title" => "Work", "labels" => ["symphony-official-pilot"]},
+                 "workflow" => %{"project_column_name" => "Doing"},
+                 "classification" => %{"labels" => %{"items" => labels}},
+                 "execution" => %{"is_ready" => true, "generation" => 1}
+               }
+             }
+           }
+         }}
+      end
+
+      assert {:ok, [issue]} =
+               LangboardClient.fetch_issues_by_ids_for_test(["CARD-1"], tracker_settings(), request_fun)
+
+      assert Issue.routable?(issue, ["symphony-official-pilot"]) == routable
+      assert issue.labels == if(routable, do: ["symphony-official-pilot"], else: [])
+    end
   end
 
   test "context refresh tolerates missing cards" do
