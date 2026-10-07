@@ -279,6 +279,97 @@ defmodule SymphonyElixir.Langboard.AdapterTest do
     assert {:ok, []} = LangboardClient.fetch_issues_by_ids_for_test([], tracker_settings(), request)
   end
 
+  test "malformed cards and archived work cannot acquire a valid dispatch fence" do
+    raw = raw_card("CARD-1", "Work", "Doing")
+
+    request = fn _, _, _, _ ->
+      {:ok,
+       %{
+         status: 200,
+         body: [
+           nil,
+           %{},
+           Map.put(raw, "description", "Details"),
+           Map.merge(raw_card("ARCHIVED", "Old", "Doing"), %{"archived_at" => "2026-10-01"}),
+           Map.merge(raw_card("STATELESS", "Missing", "Doing"), %{"project_column_name" => nil})
+         ]
+       }}
+    end
+
+    assert {:ok, [issue, archived]} =
+             LangboardClient.fetch_issues_by_states_for_test(["Doing", nil], tracker_settings(), request)
+
+    assert issue.description == "Details"
+    refute archived.dispatchable
+
+    for execution <- [nil, %{}, %{"is_ready" => true}, %{"is_ready" => true, "generation" => "1"}, %{"is_ready" => false, "generation" => 1}] do
+      request = fn _, _, _, _ ->
+        {:ok,
+         %{
+           status: 200,
+           body: %{
+             "scope_context" => %{
+               "card" => %{
+                 "core" => %{"uid" => "CARD-1", "title" => "Work", "updated_at" => "bad-date", "description" => "Details", "labels" => [%{"name" => " Work "}, "WORK", nil, ""]},
+                 "workflow" => %{"project_column_name" => "Doing"},
+                 "execution" => execution
+               }
+             }
+           }
+         }}
+      end
+
+      assert {:ok, [issue]} =
+               LangboardClient.fetch_issues_by_ids_for_test(["CARD-1"], tracker_settings(), request)
+
+      refute issue.dispatchable
+      assert issue.native_ref["execution_generation"] == nil
+      assert issue.labels == ["work"]
+      assert issue.updated_at == nil
+    end
+  end
+
+  test "environment references resolve settings without declaring literal credentials" do
+    env_names = ["LANGBOARD_BASE_URL", "LANGBOARD_BOARD_UID", "LANGBOARD_TOKEN", "SYMPHONY_TEST_TOKEN"]
+    previous = Enum.map(env_names, &{&1, System.get_env(&1)})
+    on_exit(fn -> Enum.each(previous, fn {name, value} -> restore_env(name, value) end) end)
+    System.put_env("LANGBOARD_BASE_URL", "https://langboard.test")
+    System.put_env("LANGBOARD_BOARD_UID", "BOARD")
+    System.put_env("LANGBOARD_TOKEN", "fallback")
+    System.put_env("SYMPHONY_TEST_TOKEN", "secret")
+    assert :ok = LangboardClient.validate_settings(tracker_settings(%{"token" => "$SYMPHONY_TEST_TOKEN"}))
+    assert :ok = LangboardClient.validate_settings(%{})
+    assert {:error, :missing_langboard_tracker_settings} = LangboardClient.validate_settings(nil)
+    assert LangboardAdapter.secret_environment_names(tracker_settings()) == ["LANGBOARD_TOKEN"]
+    System.delete_env("LANGBOARD_TOKEN")
+    assert {:error, :missing_langboard_token} = LangboardClient.validate_settings(%{})
+  end
+
+  test "real HTTP transport failure remains an error" do
+    File.write!(Workflow.workflow_file_path(), """
+    ---
+    tracker:
+      kind: langboard
+      active_states: [Doing]
+      terminal_states: [Done]
+      provider:
+        base_url: http://127.0.0.1:0
+        board_uid: BOARD
+        token: test-bearer
+    ---
+    Test workflow
+    """)
+
+    WorkflowStore.force_reload()
+    assert {:error, {:langboard_api_request, _}} = LangboardClient.fetch_issues_by_states(["Doing"])
+  end
+
+  test "server configuration rejects negative ports" do
+    alias SymphonyElixir.Config.Schema.Server
+    refute Server.changeset(%Server{}, %{"port" => -1}).valid?
+    assert Server.changeset(%Server{}, %{"port" => 0, "host" => "127.0.0.1"}).valid?
+  end
+
   defp tracker_settings(provider_overrides \\ %{}) do
     provider =
       Map.merge(

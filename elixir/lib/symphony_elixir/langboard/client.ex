@@ -212,8 +212,6 @@ defmodule SymphonyElixir.Langboard.Client do
     end
   end
 
-  defp normalize_context_card(_payload), do: nil
-
   defp execution_fence(card) do
     execution = card["execution"]
 
@@ -272,9 +270,9 @@ defmodule SymphonyElixir.Langboard.Client do
     end
   end
 
-  defp perform_request(method, path, params, settings) do
+  defp perform_request("GET", path, params, settings) do
     request_opts = [
-      method: method(method),
+      method: :get,
       url: settings.base_url <> path,
       headers: langboard_headers(settings.token),
       params: params,
@@ -303,13 +301,6 @@ defmodule SymphonyElixir.Langboard.Client do
   defp board_cards_path(settings), do: "/board/#{settings.board_uid}/cards"
 
   defp card_context_path(settings, card_uid), do: "/board/#{settings.board_uid}/card/#{card_uid}/context"
-
-  defp method("GET"), do: :get
-  defp method("POST"), do: :post
-  defp method("PUT"), do: :put
-  defp method("PATCH"), do: :patch
-  defp method("DELETE"), do: :delete
-  defp method(other), do: {:error, {:unsupported_method, other}}
 
   defp settings(tracker_settings) when is_map(tracker_settings) do
     provider = provider_settings(tracker_settings)
